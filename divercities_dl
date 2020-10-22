@@ -1,0 +1,168 @@
+#!/bin/sh
+# --------------------------------------
+# name: divercities_dl
+# main: jaidedctrl
+# lisc: cc0
+# date: 2020
+# requires: `lynx` and `jq`
+# --------------------------------------
+
+# ==============================================================================
+# FETCHING 
+# ==============================================================================
+# url referal -> data
+# fetch data from a given url, using divercities auth cookie
+function fetch_page {
+	local url="$1"
+	local referal="$2"
+	curl "$url" \
+		--progress-bar \
+		-L \
+		-H 'Accept: audio/webm,audio/ogg,audio/wav,audio/*;q=0.9,application/ogg;q=0.7,video/*;q=0.6,*/*;q=0.5'\
+		-H 'Accept-Language: en-US,en;q=0.5' --compressed \
+		-H 'Range: bytes=0-' \
+		-H "Referer: https://music.divercities.eu/albums/$referal" \
+		-H 'Connection: keep-alive' \
+		-H 'DNT: 1' \
+		-H "Cookie: _divercities_session=$DC_COOKIE" \
+		-H 'User-Agent: Mozilla/5.0 (Windows NT 6.1; rv:80.0) Gecko/20100101 Firefox/80.0'
+}
+
+# album_id -> html
+# fetch an album's page
+function fetch_album {
+	local album_id="$1"
+	fetch_page "https://music.divercities.eu/albums/$album_id"
+}
+
+# ==============================================================================
+# PARSE
+# ==============================================================================
+# |album_html -> album_track_spans
+# gets all track spans (containing garbled track json) from an album's page
+function album_track_spans {
+	grep 'track-title' \
+	| grep -v 'span class="track-title"'
+}
+
+# |album_track_span -> track_json
+# takes a track span ripped from an album's page, turns it into json
+function track_span_to_json {
+	sed 's%.* {&quot;id&quot;:%%' \
+	| lynx -dump -stdin -width=10000 \
+	| tr -d '\n' \
+	| sed 's%   %%g' \
+	| sed 's%^%{"id":%'
+}
+
+# |track_json -> string
+# takes the track json, and returns a pretty, comma-delimited list of its artists
+function track_json_artists {
+	jq -r '.artists[].name' 2>/dev/null \
+	| tr '\n' ',' \
+	| sed 's%,%, %g' \
+	| sed 's%, $%%'
+}
+
+# ==============================================================================
+# DOWNLOAD
+# ==============================================================================
+# album_id -> nil
+# download every track of a given album
+function dl_album {
+	local album_id="$1"
+	local tempA="$(mktemp --suffix=divercities)"
+	local tempB="$(mktemp --suffix=divercities)"
+
+	fetch_album "$album_id" \
+	| album_track_spans \
+	> "$tempA"
+
+	while IFS= read -r line; do
+		echo "$line" \
+		| track_span_to_json \
+		> "$tempB"
+		dl_track_from_json "$tempB" "$BITRATE"
+	done < "$tempA"
+
+	rm "$tempA" "$tempB"
+}
+
+# track_json_file "low"/"high" -> nil
+# downloads a track, using the track json as source for metadata and URL
+function dl_track_from_json {
+	local json="$1"; local bitrate="$2"
+	local title="$(cat "$json" | jq -r '.title' 2>/dev/null)"
+	local album="$(cat "$json" | jq -r '.album.title' 2>/dev/null)"
+	local artists="$(cat "$json" | track_json_artists)"
+	local url_stub="$(cat "$json" | jq -r ".${bitrate}_bitrate_url" 2>/dev/null)"
+	local url="https://music.divercities.eu${url_stub}"
+	local dir="."
+	local output="${dir}/${title}"
+
+	if test "$SEMANTIC" -eq 0; then
+		mkdir -p "${artists}/${album}/" 2>/dev/null
+		dir="${artists}/${album}"
+		output="${dir}/${title}"
+	fi
+
+	if test ! -e "${dir}/cover.jpg"; then
+		fetch_page "$(cat "$json" | jq -r '.cover.large_url' 2>/dev/null)" \
+		> "${dir}/cover.jpg"
+	fi
+
+	cat "$json" \
+	| jq 2>/dev/null \
+	> "${output}.json"
+
+
+	fetch_page "$url" \
+	> "${output}.mp3"
+}
+
+# ==============================================================================
+# INVOCATION
+# ==============================================================================
+SEMANTIC=0
+BITRATE="high"
+ALBUM=""
+
+# print usage and seppaku
+function usage {
+	echo "usage: divercities_dl [-hsl] -a album_url/id"
+	echo "	-a	download the album of the given url/id"
+	echo "	-s	don't put tracks in semantic path (./artist/album/track.mp3)"
+	echo "	-l	use low bitrate downloads"
+	echo "	-h	print this message"
+	echo
+	echo "To use this script, you need to first log into Divercities-- then, take the value of"
+	echo "the _divercities_session cookie in your browser, and put it into the env variable"
+	echo "\$DC_COOKIE."
+	
+	exit "$1"
+}
+
+# --------------------------------------
+
+while getopts 'lsht:a:' c; do
+	case $c in
+		h) usage 1 ;;
+		l) BITRATE="low" ;;
+		s) SEMANTIC=1 ;;
+		a) ALBUM="$OPTARG" ;;
+	esac
+done
+
+if test -z "$DC_COOKIE"; then
+	echo "Env variable \$DC_COOKIE not set!"
+	echo
+	usage 3
+fi
+
+if test -n "$ALBUM"; then
+	ALBUM="$(echo "$ALBUM" | sed 's%.*/%%')"
+	dl_album "$ALBUM"
+else
+	usage 2
+fi
+
