@@ -24,6 +24,7 @@ Otherwise, authorization will fail, and downloading tracks will be impossible.
 USAGE
 ----------------------------------------
 Use the `-a` argument followed by a URL or ID to download an album.
+Use the `-g` argument with URL/ID to download all albums from a given artist.
 
 By default, tracks are downloaded at the highest bitrate available. To use
 the low bitrate option, use the `-l` argument.

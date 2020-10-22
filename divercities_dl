@@ -4,7 +4,7 @@
 # main: jaidedctrl
 # lisc: cc0
 # date: 2020
-# requires: `lynx` and `jq`
+# requires: `jq`, `lynx`, and `ffmpeg`
 # --------------------------------------
 
 # ==============================================================================
@@ -35,10 +35,25 @@ function fetch_album {
 	fetch_page "https://music.divercities.eu/albums/$album_id"
 }
 
+# artist_id -> html
+# fetch an artist's page
+function fetch_artist {
+	local artist_id="$1"
+	fetch_page "https://music.divercities.eu/artists/$artist_id"
+}
 
 # ==============================================================================
 # PARSE
 # ==============================================================================
+# artist_html -> numbers
+# take a list of album IDs from an artist's page
+function artist_album_ids {
+	grep "album-cover " \
+	| grep "id:" \
+	| sed 's%.*id: %%' \
+	| sed 's%}).*%%'
+}
+
 # |album_html -> album_track_spans
 # gets all track spans (containing garbled track json) from an album's page
 function album_track_spans {
@@ -50,9 +65,9 @@ function album_track_spans {
 # takes a track span ripped from an album's page, turns it into json
 function track_span_to_json {
 	sed 's%.* {&quot;id&quot;:%%' \
-	| lynx -dump -stdin -width=10000 \
+	| lynx -dump -stdin -width=10000 -assume_charset=UTF-8 -display_charset=UTF-8 \
 	| tr -d '\n' \
-	| sed 's%   %%g' \
+	| sed 's%  %%g' \
 	| sed 's%^%{"id":%'
 }
 
@@ -68,6 +83,16 @@ function track_json_artists {
 # ==============================================================================
 # DOWNLOAD
 # ==============================================================================
+# artist_id -> nil
+# download all albums from an artist
+function dl_artist {
+	local artist_id="$1"
+	local albums="$(fetch_artist "$artist_id" | artist_album_ids)"
+	for album in $albums; do
+		 dl_album "$album"
+	done
+}
+
 # album_id -> nil
 # download every track of a given album
 function dl_album {
@@ -95,7 +120,7 @@ function dl_track_from_json {
 	local json="$1"; local bitrate="$2"
 	local title="$(cat "$json" | jq -r '.title' 2>/dev/null)"
 	local album="$(cat "$json" | jq -r '.album.title' 2>/dev/null)"
-	local artists="$(cat "$json" | track_json_artists)"
+	local artists="$(cat "$json" | track_json_artists | awk -F , '{print $1}')"
 	local url_stub="$(cat "$json" | jq -r ".${bitrate}_bitrate_url" 2>/dev/null)"
 	local url="https://music.divercities.eu${url_stub}"
 	local dir="."
@@ -126,9 +151,12 @@ function dl_track_from_json {
 # ==============================================================================
 # METADATA
 # ==============================================================================
+# output, title, album, artist -> nil
+# handle a track's metadata (updating, realigning, etc.)
 function track_metadata {
 	local mp3="${1}.mp3";	local json="${1}.json"
 	local title="$2";	local album="$3";	local artists="$4"
+	local track_no="$(cat "$json" | jq -r '.track_number')"
 	local temp="$(mktemp --suffix=divercities)"
 	local temp_mp3_a="$(mktemp --suffix='divercities.mp3')"
 	local temp_mp3_b="$(mktemp --suffix='divercities.mp3')"
@@ -140,10 +168,13 @@ function track_metadata {
 	metadata_album  "$temp" "$temp_mp3_a" "$temp_mp3_b" "$album"
 	metadata_artist "$temp" "$temp_mp3_a" "$temp_mp3_b" "$artists"
 	metadata_date   "$temp" "$temp_mp3_a" "$temp_mp3_b"
+	metadata_track  "$temp" "$temp_mp3_a" "$temp_mp3_b" "$track_no"
 
 	cp "$temp_mp3_a" "$mp3"
+	rm "$temp_mp3_a" "$temp_mp3_b"
 }
 
+# handle title metadata; copy over if exists, otherwise create
 function metadata_title {
 	local data="$1"
 	local mp3_a="$2"; local mp3_b="$3"; rm "$mp3_b"
@@ -157,6 +188,7 @@ function metadata_title {
 	fi
 }
 
+# handle artist metadata; copy over if exists, otherwise create
 function metadata_album {
 	local data="$1"
 	local mp3_a="$2"; local mp3_b="$3"; rm "$mp3_b"
@@ -170,14 +202,15 @@ function metadata_album {
 	fi
 }
 
+# handle artist metadata; copy over if exists, otherwise create
 function metadata_artist {
 	local data="$1"
 	local mp3_a="$2"; local mp3_b="$3"; rm "$mp3_b"
 	local artist="$4"
 
-	if grep "TOPE" "$data" >/dev/null; then
-		artist="$(grep "TOPE" "$data" | awk '{print $3}')"
-	fi
+#	if grep "TOPE" "$data" >/dev/null; then
+#		artist="$(grep "TOPE" "$data" | awk '{print $3}')"
+#	fi
 
 	if grep "artist" "$data" >/dev/null; then
 		return
@@ -187,6 +220,7 @@ function metadata_artist {
 	fi
 }
 
+# handle date metadata; copy over if exists
 function metadata_date {
 	local data="$1"
 	local mp3_a="$2"; local mp3_b="$3"; rm "$mp3_b"
@@ -198,6 +232,19 @@ function metadata_date {
 	fi
 }
 
+# handle track metadata; add it if nonexistant
+function metadata_track {
+	local data="$1"
+	local mp3_a="$2"; local mp3_b="$3"; rm "$mp3_b"
+	local track_no="$4"
+
+	if grep "track" "$data" >/dev/null; then
+		return
+	else
+		ffmpeg -i "$mp3_a" -codec copy -metadata track="$track_no" "$mp3_b"
+		cp "$mp3_b" "$mp3_a"
+	fi
+}
 
 # ==============================================================================
 # INVOCATION
@@ -205,11 +252,14 @@ function metadata_date {
 SEMANTIC=0
 BITRATE="high"
 ALBUM=""
+GROUP=""
 
 # print usage and seppaku
 function usage {
 	echo "usage: divercities_dl [-hsl] -a album_url/id"
+	echo "       divercities_dl [-hsl] -g artist_url/id"
 	echo "	-a	download the album of the given url/id"
+	echo "	-g	download albums of artist at given url/id"
 	echo "	-s	don't put tracks in semantic path (./artist/album/track.mp3)"
 	echo "	-l	use low bitrate downloads"
 	echo "	-h	print this message"
@@ -223,12 +273,13 @@ function usage {
 
 # --------------------------------------
 
-while getopts 'lsht:a:' c; do
+while getopts 'lsht:g:a:' c; do
 	case $c in
 		h) usage 1 ;;
 		l) BITRATE="low" ;;
 		s) SEMANTIC=1 ;;
 		a) ALBUM="$OPTARG" ;;
+		g) GROUP="$OPTARG" ;;
 	esac
 done
 
@@ -241,6 +292,9 @@ fi
 if test -n "$ALBUM"; then
 	ALBUM="$(echo "$ALBUM" | sed 's%.*/%%')"
 	dl_album "$ALBUM"
+elif test -n "$GROUP"; then
+	GROUP="$(echo "$GROUP" | sed 's%.*/%%')"
+	dl_artist "$GROUP"
 else
 	usage 2
 fi
