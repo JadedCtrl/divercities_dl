@@ -9,8 +9,9 @@ download individual tracks (without metadata).
 REQUIREMENTS
 ----------------------------------------
 * ksh, bash, etc
-* jq	(https://stedolan.github.io/jq/)
-* lynx	(https://lynx.browser.org/)
+* jq      (https://stedolan.github.io/jq/)
+* lynx    (https://lynx.browser.org/)
+* ffmpeg  (https://ffmpeg.org/)
 * a divercities account
 
 Before using divercities_dl, you need to log into Divercities from your

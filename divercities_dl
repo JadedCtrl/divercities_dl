@@ -35,6 +35,7 @@ function fetch_album {
 	fetch_page "https://music.divercities.eu/albums/$album_id"
 }
 
+
 # ==============================================================================
 # PARSE
 # ==============================================================================
@@ -118,7 +119,85 @@ function dl_track_from_json {
 
 	fetch_page "$url" \
 	> "${output}.mp3"
+
+	track_metadata "${output}" "$title" "$album" "$artists"
 }
+
+# ==============================================================================
+# METADATA
+# ==============================================================================
+function track_metadata {
+	local mp3="${1}.mp3";	local json="${1}.json"
+	local title="$2";	local album="$3";	local artists="$4"
+	local temp="$(mktemp --suffix=divercities)"
+	local temp_mp3_a="$(mktemp --suffix='divercities.mp3')"
+	local temp_mp3_b="$(mktemp --suffix='divercities.mp3')"
+
+	ffmpeg -i "$mp3" 2> "$temp"
+	cp "$mp3" "$temp_mp3_a"
+
+	metadata_title  "$temp" "$temp_mp3_a" "$temp_mp3_b" "$title"
+	metadata_album  "$temp" "$temp_mp3_a" "$temp_mp3_b" "$album"
+	metadata_artist "$temp" "$temp_mp3_a" "$temp_mp3_b" "$artists"
+	metadata_date   "$temp" "$temp_mp3_a" "$temp_mp3_b"
+
+	cp "$temp_mp3_a" "$mp3"
+}
+
+function metadata_title {
+	local data="$1"
+	local mp3_a="$2"; local mp3_b="$3"; rm "$mp3_b"
+	local title="$4"
+
+	if grep "title" "$data" >/dev/null; then
+		return
+	else
+		ffmpeg -i "$mp3_a" -codec copy -metadata title="$title" "$mp3_b"
+		cp "$mp3_b" "$mp3_a"
+	fi
+}
+
+function metadata_album {
+	local data="$1"
+	local mp3_a="$2"; local mp3_b="$3"; rm "$mp3_b"
+	local album="$4"
+
+	if grep "album" "$data" >/dev/null; then
+		return
+	else
+		ffmpeg -i "$mp3_a" -codec copy -metadata album="$album" "$mp3_b"
+		cp "$mp3_b" "$mp3_a"
+	fi
+}
+
+function metadata_artist {
+	local data="$1"
+	local mp3_a="$2"; local mp3_b="$3"; rm "$mp3_b"
+	local artist="$4"
+
+	if grep "TOPE" "$data" >/dev/null; then
+		artist="$(grep "TOPE" "$data" | awk '{print $3}')"
+	fi
+
+	if grep "artist" "$data" >/dev/null; then
+		return
+	else
+		ffmpeg -i "$mp3_a" -codec copy -metadata artist="$artist" "$mp3_b"
+		cp "$mp3_b" "$mp3_a"
+	fi
+}
+
+function metadata_date {
+	local data="$1"
+	local mp3_a="$2"; local mp3_b="$3"; rm "$mp3_b"
+
+	if grep "TORY" "$data" >/dev/null; then
+		date="$(grep "TORY" "$data" | awk '{print $3}')"
+		ffmpeg -i "$mp3_a" -codec copy -metadata date="$date" "$mp3_b"
+		cp "$mp3_b" "$mp3_a"
+	fi
+}
+
 
 # ==============================================================================
 # INVOCATION
@@ -165,4 +244,3 @@ if test -n "$ALBUM"; then
 else
 	usage 2
 fi
-
