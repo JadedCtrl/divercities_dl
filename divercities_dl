@@ -132,6 +132,10 @@ function dl_track_from_json {
 		output="${dir}/${title}"
 	fi
 
+	if test -e "${output}.mp3"; then
+		return
+	fi
+
 	if test ! -e "${dir}/cover.jpg"; then
 		fetch_page "$(cat "$json" | jq -r '.cover.large_url' 2>/dev/null)" \
 		> "${dir}/cover.jpg"
