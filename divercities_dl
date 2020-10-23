@@ -15,10 +15,12 @@
 function fetch_page {
 	local url="$1"
 	local referal="$2"
+	local auth="$3"
 	curl "$url" \
 		--progress-bar \
 		-L \
 		-H 'Accept: audio/webm,audio/ogg,audio/wav,audio/*;q=0.9,application/ogg;q=0.7,video/*;q=0.6,*/*;q=0.5'\
+		-H "X-Authorization: Token token=${auth}" \
 		-H 'Accept-Language: en-US,en;q=0.5' --compressed \
 		-H 'Range: bytes=0-' \
 		-H "Referer: https://music.divercities.eu/albums/$referal" \
@@ -39,19 +41,34 @@ function fetch_album {
 # fetch an artist's page
 function fetch_artist {
 	local artist_id="$1"
-	fetch_page "https://music.divercities.eu/artists/$artist_id"
+	local artist_url="https://music.divercities.eu/artists/$artist_id"
+	local token="$(fetch_page "$artist_url" | api_key)"
+	fetch_page "https://music.divercities.eu/api/v1/artists/${artist_id}/albums" "$artist_url" "$token"
+}
+
+# artist_id -> html
+# fetch an artist's album json
+function fetch_artist_album_json {
+	local artist_id="$1"
+	local token="$(fetch_artist "$artist_id" | api_key)"
+	fetch_page "https://music.divercities.eu/api/v1/artists/${artist_id}/albums" \
+		   "$artist_url" "$token"
 }
 
 # ==============================================================================
 # PARSE
 # ==============================================================================
-# artist_html -> numbers
-# take a list of album IDs from an artist's page
+# html -> window.appconfig.apiKey
+# return the api key from html, for use with api calls
+function api_key {
+	grep "apiKey" \
+	| sed "s%.* '%%" \
+	| sed "s%'.*%%"
+}
+# artist_album_json -> numbers
+# take a list of album IDs from an artist's album json
 function artist_album_ids {
-	grep "album-cover " \
-	| grep "id:" \
-	| sed 's%.*id: %%' \
-	| sed 's%}).*%%'
+	jq -r '.[].id'
 }
 
 # |album_html -> album_track_spans
@@ -87,7 +104,8 @@ function track_json_artists {
 # download all albums from an artist
 function dl_artist {
 	local artist_id="$1"
-	local albums="$(fetch_artist "$artist_id" | artist_album_ids)"
+	local albums="$(fetch_artist_album_json "$artist_id" | artist_album_ids)"
+
 	for album in $albums; do
 		 dl_album "$album"
 	done
