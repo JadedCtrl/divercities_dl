@@ -136,8 +136,8 @@ function dl_album {
 # downloads a track, using the track json as source for metadata and URL
 function dl_track_from_json {
 	local json="$1"; local bitrate="$2"
-	local title="$(cat "$json" | jq -r '.title' 2>/dev/null)"
-	local album="$(cat "$json" | jq -r '.album.title' 2>/dev/null)"
+	local title="$(cat "$json" | jq -r '.title' 2>/dev/null | sanitize)"
+	local album="$(cat "$json" | jq -r '.album.title' 2>/dev/null | sanitize)"
 	local artists="$(cat "$json" | track_json_artists | awk -F , '{print $1}')"
 	local url_stub="$(cat "$json" | jq -r ".${bitrate}_bitrate_url" 2>/dev/null)"
 	local url="https://music.divercities.eu${url_stub}"
@@ -266,6 +266,17 @@ function metadata_track {
 		ffmpeg -i "$mp3_a" -codec copy -metadata track="$track_no" "$mp3_b"
 		cp "$mp3_b" "$mp3_a"
 	fi
+}
+
+# ==============================================================================
+# UTIL
+# ==============================================================================
+# make a string safe for use as a filename
+# |string -> string
+function sanitize {
+	sed 's%/%-%g' \
+	| sed 's%^ %%' \
+	| sed 's% $%%'
 }
 
 # ==============================================================================
